@@ -109,13 +109,13 @@ def main():
     today_date = datetime.now().strftime('%Y-%m-%d')
     
     # Symbols to process
-    symbols = ['QLD', '^NDX']
+    symbols = ['QLD', '^NDX','SSO','UWM','TQQQ','UPRO','TNA','SPYU']
     
     for symbol in symbols:
         try:
             # Step 2: Fetch historical data for the symbol
             print(f"Fetching data for symbol: {symbol}")
-            data = yf.download(symbol, start='1998-06-21', end=today_date)
+            data = yf.download(symbol, start='2006-06-21', end=today_date)
             if data.empty:
                 print(f"No data fetched for symbol: {symbol}")
                 continue
