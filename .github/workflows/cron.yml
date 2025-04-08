@@ -2,44 +2,50 @@ name: Update QLD Stock Data
 
 on:
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '0 3 * * *'  # Automatic run every day at 3 AM UTC
   workflow_dispatch:
     inputs:
       my_input:
-        description: 'Optional argument from website or manual trigger'
-        required: false  # ← Now it's optional
-        default: ''      # ← Empty string if not provided
+        description: 'Optional symbol to add (triggers add.py instead of main.py)'
+        required: false
+        default: ''
 
 jobs:
   update-qld-stock-data:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Verify TOKEN
-      run: |
-        if [ -z "${TOKEN}" ]; then
-          echo "TOKEN is not set."
-          exit 1
-        else
-          echo "TOKEN is set."
-        fi
-      env:
-        TOKEN: ${{ secrets.TOKEN }}
+      - name: Verify TOKEN
+        run: |
+          if [ -z "${TOKEN}" ]; then
+            echo "TOKEN is not set."
+            exit 1
+          else
+            echo "TOKEN is set."
+          fi
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
 
-    - name: Run the script to update QLD stock data
-      env:
-        TOKEN: ${{ secrets.TOKEN }}
-      run: |
-        python main.py "${{ github.event.inputs.my_input }}"
+      - name: Run add.py if argument is provided, otherwise main.py
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
+        run: |
+          if [ -n "${{ github.event.inputs.my_input }}" ]; then
+            echo "Running add.py with argument: ${{ github.event.inputs.my_input }}"
+            python add.py "${{ github.event.inputs.my_input }}"
+          else
+            echo "Running main.py with no arguments"
+            python main.py
+          fi
