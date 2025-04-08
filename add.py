@@ -42,9 +42,11 @@ def main():
 
     new_symbol = sys.argv[1]
     added = add_symbol(new_symbol)
-
+    if added:
+        print("No need to run main.py")
     # Call main.py regardless of whether it was added or already existed
-    run_main_py()
+    else:
+        run_main_py()
 
 if __name__ == '__main__':
     main()
