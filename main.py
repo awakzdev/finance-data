@@ -109,7 +109,7 @@ def main():
     today_date = datetime.now().strftime('%Y-%m-%d')
     
     # Symbols to process
-    symbols = ['QLD', '^NDX','SSO','UWM','TQQQ','UPRO','TNA','SPYU','MSTU','NVDL','PLTU','PTIR']
+    symbols = ['QLD', '^NDX','SSO','UWM','TQQQ','UPRO','TNA','SPYU','MSTU','NVDL','PLTU','PTIR','QQQ']
     
     for symbol in symbols:
         try:
