@@ -109,7 +109,13 @@ def main():
     today_date = datetime.now().strftime('%Y-%m-%d')
     
     # Symbols to process
-    symbols = ['QLD', '^NDX','SSO','UWM','TQQQ','UPRO','TNA','SPYU','MSTU','NVDL','PLTU','PTIR','QQQ','SPY']
+    symbols_file = 'symbols.csv'
+    if not os.path.exists(symbols_file):
+        raise FileNotFoundError(f"{symbols_file} does not exist. Please create it before running the script.")
+    
+    with open(symbols_file, 'r', encoding='utf-8') as f:
+        symbols = [line.strip() for line in f if line.strip()]
+
     
     for symbol in symbols:
         try:
