@@ -77,9 +77,14 @@ def add_symbol(symbol):
         print(f"Symbol {symbol} added to {SYMBOLS_FILE}.")
         return True
 
-def run_main_py():
+def run_main_py(symbol=None):
     print("Running main.py...")
-    result = subprocess.run(["python", "main.py"], capture_output=True, text=True)
+    
+    cmd = ["python", "main.py"]
+    if symbol:
+        cmd += ["--symbol", symbol]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    
     print(result.stdout)
     if result.stderr:
         print("Errors during main.py execution:")
@@ -104,7 +109,7 @@ def main():
 
     if added:
         commit_symbols_csv(github_token)
-        run_main_py()
+        run_main_py(symbol=new_symbol)
     else:
         print("Symbol already exists, skipping main.py.")
 
