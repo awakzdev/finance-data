@@ -93,7 +93,7 @@ def validate_and_fix_csv(csv_filename):
         print(f"An error occurred while validating {csv_filename}: {e}")
         return False
 
-def main():
+def main(symbol: str = None):
     # Retrieve the GitHub token from environment variables
     load_dotenv()
     github_token = os.getenv('TOKEN')
@@ -109,12 +109,17 @@ def main():
     today_date = datetime.now().strftime('%Y-%m-%d')
     
     # Symbols to process
-    symbols_file = 'symbols.csv'
-    if not os.path.exists(symbols_file):
-        raise FileNotFoundError(f"{symbols_file} does not exist. Please create it before running the script.")
-    
-    with open(symbols_file, 'r', encoding='utf-8') as f:
-        symbols = [line.strip() for line in f if line.strip()]
+    # Decide which symbols to process
+    if symbol:
+        symbols = [symbol]
+        print(f"Processing only symbol from argument: {symbol}")
+    else:
+        symbols_file = 'symbols.csv'
+        if not os.path.exists(symbols_file):
+            raise FileNotFoundError(f"{symbols_file} does not exist. Please create it before running the script.")
+        with open(symbols_file, 'r', encoding='utf-8') as f:
+            symbols = [line.strip() for line in f if line.strip()]
+
 
     
     for symbol in symbols:
@@ -205,4 +210,11 @@ def main():
             print(f'An error occurred while processing symbol {symbol}: {e}')
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Fetch & upload stock CSVs")
+    parser.add_argument(
+        "--symbol", "-s",
+        help="(Optional) Single symbol to process instead of symbols.csv",
+        default=None
+    )
+    args = parser.parse_args()
+    main(symbol=args.symbol)
