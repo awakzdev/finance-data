@@ -18,7 +18,7 @@ def validate_and_fix_csv(csv_filename):
     """
     Validates and fixes a CSV to ensure it starts with the header:
     Date,Open,High,Low,Close,Adj Close,Volume
-    and all subsequent rows start with dd/mm/yyyy.
+    and that all subsequent rows begin with a valid dd/mm/yyyy date.
     """
     expected_header = ['Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
     date_pattern = re.compile(r'\d{2}/\d{2}/\d{4}')
@@ -28,32 +28,33 @@ def validate_and_fix_csv(csv_filename):
             rows = list(csv.reader(f))
 
         # find header index
-        header_idx = next((i for i,row in enumerate(rows)
+        header_idx = next((i for i, row in enumerate(rows)
                            if normalize_header(row) == expected_header), None)
         if header_idx is None:
             print(f"Header not found in {csv_filename}.")
             return False
 
-        valid = []
+        valid_rows = []
         for row in rows[header_idx:]:
             if not row:
                 continue
-            if row == rows[header_idx]:  # header
-                valid.append(row)
+            if row == rows[header_idx]:  # header row
+                valid_rows.append(row)
             elif date_pattern.match(row[0]) and len(row) == len(expected_header):
-                valid.append(row)
+                valid_rows.append(row)
             else:
                 break
 
-        if len(valid) < 2:
+        if len(valid_rows) < 2:
             print(f"No valid data rows in {csv_filename}.")
             return False
 
         with open(csv_filename, 'w', encoding='utf-8', newline='') as f:
             writer = csv.writer(f)
-            writer.writerows(valid)
+            writer.writerows(valid_rows)
 
         return True
+
     except Exception as e:
         print(f"Error validating {csv_filename}: {e}")
         return False
@@ -62,18 +63,24 @@ def validate_and_fix_csv(csv_filename):
 def update_qld2(repo, branch, github_token):
     """
     Updates qld2_stock_data.csv by:
-    1) On first run: generating predicted 2×QQQ history before QLD inception.
-    2) Each run: appending new QLD rows since last date.
-    Then pushes the updated CSV to GitHub.
+    1) On the first run: generating predicted 2×QQQ history before QLD inception.
+    2) On every run: appending new QLD rows since the last date.
+    Finally, pushes the updated CSV back to GitHub.
     """
     fname = 'qld2_stock_data.csv'
     inception = '2006-06-21'
     today = datetime.now().strftime('%Y-%m-%d')
 
-    # Read or initialize
+    # If we've run before, read & append new QLD
     if os.path.exists(fname):
-        df = pd.read_csv(fname, index_col='Date', parse_dates=False)
-        df.index = pd.to_datetime(df.index, dayfirst=True)
+        # parse both dd/mm and ISO formats
+        df = pd.read_csv(
+            fname,
+            index_col='Date',
+            parse_dates=True,
+            dayfirst=True,
+            infer_datetime_format=True
+        )
         last = df.index.max()
         if last.strftime('%Y-%m-%d') >= today:
             print(f"qld2 up to date through {last.date()}")
@@ -86,40 +93,44 @@ def update_qld2(repo, branch, github_token):
                 new.index = new.index.strftime('%d/%m/%Y')
                 if 'Adj Close' not in new.columns:
                     new['Adj Close'] = new['Close']
-                new = new[['Open','High','Low','Close','Adj Close','Volume']]
+                new = new[['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']]
                 df_new = pd.concat([df, new])
                 df_new.to_csv(fname, index_label='Date')
                 print(f"Appended {len(new)} new rows to {fname}.")
     else:
-        # first run: predicted history from QQQ
+        # first run: build predicted QQQ×2 history
         hist = yf.download('QQQ', start='2000-01-01', end=inception)
         if isinstance(hist.columns, pd.MultiIndex):
             hist.columns = hist.columns.get_level_values(0)
-        for c in ['Open','High','Low','Close','Adj Close']:
+        for c in ['Open', 'High', 'Low', 'Close', 'Adj Close']:
             hist[c] = hist[c] * 2
         hist.index = hist.index.strftime('%d/%m/%Y')
         hist.to_csv(fname, index_label='Date')
         print(f"Initialized predicted history in {fname}.")
-        # then append actual from inception
+        # now append real QLD from inception onward
         update_qld2(repo, branch, github_token)
         return
 
-    # Push back to GitHub
+    # push back to GitHub
     if validate_and_fix_csv(fname):
         url = f'https://api.github.com/repos/{repo}/contents/{fname}'
-        hdr = {'Authorization': f'token {github_token}'}
-        r = requests.get(url, headers=hdr)
-        sha = r.status_code == 200 and r.json().get('sha')
-        with open(fname,'rb') as f:
+        headers = {'Authorization': f'token {github_token}'}
+        resp = requests.get(url, headers=headers)
+        sha = resp.status_code == 200 and resp.json().get('sha')
+        with open(fname, 'rb') as f:
             content = base64.b64encode(f.read()).decode()
-        payload = {'message':'Update qld2_stock_data.csv','content':content,'branch':branch}
+        payload = {
+            'message': 'Update qld2_stock_data.csv',
+            'content': content,
+            'branch': branch
+        }
         if sha:
             payload['sha'] = sha
-        resp = requests.put(url, headers=hdr, json=payload)
-        if resp.status_code in (200,201):
+        put = requests.put(url, headers=headers, json=payload)
+        if put.status_code in (200, 201):
             print(f"Pushed {fname} ({'updated' if sha else 'created'}).")
         else:
-            print(f"Failed push: {resp.json()}")
+            print(f"Failed push: {put.json()}")
 
 
 def main(symbol=None):
@@ -131,11 +142,11 @@ def main(symbol=None):
     branch = 'main'
     today = datetime.now().strftime('%Y-%m-%d')
 
-    # symbol list
+    # build symbols list
     if symbol:
         syms = [symbol]
     else:
-        with open('symbols.csv') as f:
+        with open('symbols.csv', 'r', encoding='utf-8') as f:
             syms = [s.strip() for s in f if s.strip()]
 
     for s in syms:
@@ -152,25 +163,26 @@ def main(symbol=None):
         df.index = df.index.strftime('%d/%m/%Y')
         if 'Adj Close' not in df.columns:
             df['Adj Close'] = df['Close']
-        df = df[['Open','High','Low','Close','Adj Close','Volume']]
+        df = df[['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']]
         fn = f"{s.replace('^','').lower()}_stock_data.csv"
         df.to_csv(fn, index_label='Date')
         if not validate_and_fix_csv(fn):
             continue
-        # push
+        # push symbol file
         url = f'https://api.github.com/repos/{repo}/contents/{fn}'
         hdr = {'Authorization': f'token {token}'}
         r = requests.get(url, headers=hdr)
-        sha = r.status_code==200 and r.json().get('sha')
-        with open(fn,'rb') as f:
+        sha = r.status_code == 200 and r.json().get('sha')
+        with open(fn, 'rb') as f:
             cb = base64.b64encode(f.read()).decode()
-        pl = {'message':f'Update {s} data','content':cb,'branch':branch}
-        if sha: pl['sha']=sha
+        pl = {'message': f'Update {s} data', 'content': cb, 'branch': branch}
+        if sha:
+            pl['sha'] = sha
         p = requests.put(url, headers=hdr, json=pl)
         print(f"Pushed {fn}: {p.status_code}")
 
-if __name__=='__main__':
-    p = argparse.ArgumentParser()
-    p.add_argument('-s','--symbol',default=None)
-    args = p.parse_args()
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-s', '--symbol', default=None)
+    args = parser.parse_args()
     main(symbol=args.symbol)
