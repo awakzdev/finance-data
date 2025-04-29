@@ -129,21 +129,21 @@ def main(symbol: str = None):
         except Exception as e:
             print(f"Error processing {sym}: {e}")
 
-    # Step 2: Merge predictedQLD.csv + qld_stock_data.csv → qld2_stock_data.csv
-    pred_file = 'predictedQLD.csv'
+    # Step 2: Merge preidctedQLD.csv + qld_stock_data.csv → qld2_stock_data.csv
+    pred_file = 'preidctedQLD.csv'
     real_file = 'qld_stock_data.csv'
     merged_file = 'qld2_stock_data.csv'
 
     if os.path.exists(pred_file) and os.path.exists(real_file):
+        # read both, preserving format
         df_pred = pd.read_csv(pred_file, index_col='Date', parse_dates=False)
         df_real = pd.read_csv(real_file, index_col='Date', parse_dates=False)
-        # ensure same columns order
         cols = ['Open','High','Low','Close','Adj Close','Volume']
         df_pred = df_pred[cols]
         df_real = df_real[cols]
 
         df_merged = pd.concat([df_pred, df_real])
-        df_merged.to_csv(merged_file, index_label='Date')
+        df_merged.to_csv(merged_file, index=True, index_label='Date')
         print(f"Merged {pred_file} + {real_file} into {merged_file}")
 
         if validate_and_fix_csv(merged_file):
