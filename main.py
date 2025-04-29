@@ -10,223 +10,154 @@ import re
 import pandas as pd
 
 def normalize_header(header_row):
-    """Trim whitespace from each column in the header row."""
     return [col.strip() for col in header_row]
 
 def validate_and_fix_csv(csv_filename):
-    """
-    Validates the CSV format and fixes it if corrupted.
-
-    The correct format should have the header:
-    Date,Open,High,Low,Close,Adj Close,Volume
-    followed by data lines starting with a date in dd/mm/yyyy format.
-
-    If the CSV is corrupted, it removes any lines after the first invalid row.
-
-    Args:
-        csv_filename (str): The path to the CSV file to validate and fix.
-
-    Returns:
-        bool: True if the CSV was valid or successfully fixed, False otherwise.
-    """
     expected_header = ['Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
-    date_pattern = re.compile(r'\d{2}/\d{2}/\d{4}')  # Matches dd/mm/yyyy
-
+    date_pattern = re.compile(r'\d{2}/\d{2}/\d{4}')
     try:
         with open(csv_filename, 'r', newline='', encoding='utf-8') as infile:
-            reader = csv.reader(infile)
-            lines = list(reader)
-
-        # Find the index where the correct header starts (using normalization)
+            lines = list(csv.reader(infile))
         header_index = -1
         for i, row in enumerate(lines):
             if normalize_header(row) == expected_header:
                 header_index = i
                 break
-
-        if header_index == -1:
-            print(f"Header not found in {csv_filename}. The file may be corrupted.")
+        if header_index < 0 or len(lines) < header_index + 2:
+            print(f"❌ {csv_filename} is missing a valid header or data.")
             return False
 
-        # Extract the relevant rows starting from the header
-        valid_rows = lines[header_index:]
-
-        # Verify that there is at least one data row
-        if len(valid_rows) < 2:
-            print(f"No data found after header in {csv_filename}.")
-            return False
-
-        # Validate data rows: stop reading after the first invalid row.
-        valid_data = [valid_rows[0]]  # Include the header
-        for row in valid_rows[1:]:
-            if not row:
-                continue  # Skip empty lines
-            if date_pattern.match(row[0]):
-                if len(row) == len(expected_header):
-                    valid_data.append(row)
-                else:
-                    print(f"Skipping row with incorrect number of columns: {row}")
+        valid = [lines[header_index]]
+        for row in lines[header_index+1:]:
+            if not row: continue
+            if date_pattern.match(row[0]) and len(row) == len(expected_header):
+                valid.append(row)
             else:
-                print(f"Encountered non-data row: {row}. Discarding all subsequent lines.")
                 break
 
-        if len(valid_data) < 2:
-            print(f"No valid data found in {csv_filename}.")
+        if len(valid) < 2:
+            print(f"❌ No valid data in {csv_filename}.")
             return False
 
-        # Rewrite the CSV with valid data only
         with open(csv_filename, 'w', newline='', encoding='utf-8') as outfile:
-            writer = csv.writer(outfile)
-            writer.writerows(valid_data)
-
-        print(f"CSV {csv_filename} validated and fixed successfully.")
+            csv.writer(outfile).writerows(valid)
+        print(f"✅ CSV {csv_filename} validated/fixed.")
         return True
 
     except Exception as e:
-        print(f"An error occurred while validating {csv_filename}: {e}")
+        print(f"❌ Error validating {csv_filename}: {e}")
         return False
 
 def main(symbol: str = None):
-    # Load GitHub token
+    # load token
     load_dotenv()
     github_token = os.getenv('TOKEN')
     if not github_token:
         raise ValueError("TOKEN environment variable not set")
-    else:
-        print(f"TOKEN loaded, length: {len(github_token)} characters")
+    print(f"TOKEN loaded ({len(github_token)} chars)")
 
-    repo = 'awakzdev/finance-data'
+    repo   = 'awakzdev/finance-data'
     branch = 'main'
+    today  = datetime.now().strftime('%Y-%m-%d')
 
-    # Step 1: Today's date for Yahoo Finance
-    today_date = datetime.now().strftime('%Y-%m-%d')
-
-    # Decide symbols list
+    # symbols list
     if symbol:
         symbols = [symbol.upper()]
-        print(f"Processing only symbol from argument: {symbol.upper()}")
     else:
-        symbols_file = 'symbols.csv'
-        if not os.path.exists(symbols_file):
-            raise FileNotFoundError(f"{symbols_file} does not exist.")
-        with open(symbols_file, 'r', encoding='utf-8') as f:
-            symbols = [line.strip().upper() for line in f if line.strip()]
+        if not os.path.exists('symbols.csv'):
+            raise FileNotFoundError("symbols.csv not found")
+        symbols = [s.strip().upper() for s in open('symbols.csv') if s.strip()]
 
-    for symbol in symbols:
+    for sym in symbols:
         try:
-            # Fetch historical data
-            print(f"Fetching data for symbol: {symbol}")
-            data = yf.download(symbol, start='2006-06-21', end=today_date)
-            if data.empty:
-                print(f"No data fetched for symbol: {symbol}")
+            print(f"\n🔍 Fetching {sym}…")
+            df = yf.download(sym, start='2006-06-21', end=today)
+            if df.empty:
+                print(f"⚠️ No data for {sym}, skipping.")
                 continue
 
-            # Flatten MultiIndex columns if present
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
+            # flatten & format
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            df.index = df.index.strftime('%d/%m/%Y')
+            if 'Price' in df.columns:
+                df.drop(columns='Price', inplace=True)
+            if 'Adj Close' not in df.columns:
+                df['Adj Close'] = df['Close']
+            df = df[['Open','High','Low','Close','Adj Close','Volume']]
 
-            # Format the index dates as dd/mm/yyyy
-            data.index = data.index.strftime('%d/%m/%Y')
+            # write individual CSV
+            s = sym.replace('^','').lower()
+            csv_file = f"{s}_stock_data.csv"
+            df.to_csv(csv_file, index=True, index_label='Date')
+            print(f"💾 Wrote {csv_file}")
 
-            # Drop 'Price' if exists, ensure 'Adj Close' exists
-            if 'Price' in data.columns:
-                data.drop(columns='Price', inplace=True)
-            if 'Adj Close' not in data.columns:
-                data['Adj Close'] = data['Close']
-
-            # Reorder to [Open,High,Low,Close,Adj Close,Volume]
-            expected_cols = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
-            data = data[expected_cols]
-
-            # Save the per-symbol CSV
-            sanitized = symbol.replace('^', '').lower()
-            csv_filename = f'{sanitized}_stock_data.csv'
-            data.to_csv(csv_filename, index=True, index_label='Date')
-            print(f"CSV {csv_filename} saved successfully.")
-
-            # Validate/fix it
-            if not validate_and_fix_csv(csv_filename):
-                print(f"Skipping upload for {csv_filename} due to validation failure.")
+            if not validate_and_fix_csv(csv_file):
+                print(f"⚠️ Skipping upload for {csv_file}")
                 continue
 
-            # -----------------------------------------------------------------
-            # If symbol is QLD, also build qld2_stock_data.csv
-            if symbol == 'QLD':
+            # ─── Special: build qld2_stock_data.csv ───
+            if sym == 'QLD':
                 pred_file     = 'predictedQLD.csv'
                 combined_file = 'qld2_stock_data.csv'
 
-                # Read predicted + actual
-                pred_df   = pd.read_csv(pred_file,
-                                        parse_dates=['Date'],
-                                        index_col='Date',
-                                        dayfirst=True)
-                actual_df = pd.read_csv(csv_filename,
+                # read actual
+                actual_df = pd.read_csv(csv_file,
                                         parse_dates=['Date'],
                                         index_col='Date',
                                         dayfirst=True)
 
-                # Stack predicted first, then actual
-                combined_df = pd.concat([pred_df, actual_df])
+                # read predicted or fallback empty
+                if os.path.exists(pred_file):
+                    pred_df = pd.read_csv(pred_file,
+                                          parse_dates=['Date'],
+                                          index_col='Date',
+                                          dayfirst=True)
+                else:
+                    print(f"⚠️ {pred_file} not found, combining empty + actual only.")
+                    pred_df = pd.DataFrame(columns=actual_df.columns)
 
-                # Back to dd/mm/yyyy strings on index
-                combined_df.index = combined_df.index.strftime('%d/%m/%Y')
+                # concat & write
+                combo = pd.concat([pred_df, actual_df])
+                combo.index = combo.index.strftime('%d/%m/%Y')
+                combo.to_csv(combined_file, index_label='Date')
+                print(f"💾 Wrote {combined_file}")
 
-                # Overwrite combined CSV
-                combined_df.to_csv(combined_file, index_label='Date')
-                print(f"Combined CSV {combined_file} saved successfully.")
-
-                # Validate the combined file
+                # validate combined
                 if not validate_and_fix_csv(combined_file):
-                    print(f"Skipping upload for {combined_file} due to validation failure.")
-                # (You can add GitHub upload logic here for qld2_stock_data.csv)
-            # -----------------------------------------------------------------
+                    print(f"⚠️ Combined file {combined_file} failed validation.")
+                # (you can add GitHub upload logic here if you like)
 
-            # Step 5: GitHub SHA lookup for the individual symbol file
-            url = f'https://api.github.com/repos/{repo}/contents/{csv_filename}'
-            headers = {'Authorization': f'token {github_token}'}
-            response = requests.get(url, headers=headers)
-            response_json = response.json()
+            # ─── GitHub upload for the single CSV ───
+            url     = f"https://api.github.com/repos/{repo}/contents/{csv_file}"
+            headers = {'Authorization': f"token {github_token}"}
+            r       = requests.get(url, headers=headers)
+            status  = r.status_code
+            sha     = r.json().get('sha') if status == 200 else None
 
-            if response.status_code == 200:
-                sha = response_json['sha']
-                print(f'File {csv_filename} exists, updating it.')
-            elif response.status_code == 404:
-                sha = None
-                print(f'File {csv_filename} does not exist, creating it.')
-            else:
-                print(f'Unexpected GitHub error: {response_json}')
-                continue
+            action = "Updating" if sha else "Creating"
+            print(f"{action} {csv_file} in repo…")
 
-            # Read & base64-encode
-            with open(csv_filename, 'rb') as f:
-                content = f.read()
-            content_b64 = base64.b64encode(content).decode('utf-8')
-
-            # Prepare payload
+            content_b64 = base64.b64encode(open(csv_file,'rb').read()).decode()
             payload = {
-                'message': f'Update {sanitized} stock data',
+                'message': f"Update {s} stock data",
                 'content': content_b64,
                 'branch': branch
             }
             if sha:
                 payload['sha'] = sha
 
-            # Push it
-            resp = requests.put(url, headers=headers, json=payload)
-            if resp.status_code in (200, 201):
-                print(f'File {csv_filename} updated successfully in repo.')
+            put = requests.put(url, headers=headers, json=payload)
+            if put.status_code in (200,201):
+                print(f"✅ {csv_file} pushed to GitHub.")
             else:
-                print(f'Failed to update {csv_filename}:', resp.json())
+                print(f"❌ GitHub error for {csv_file}:", put.json())
 
         except Exception as e:
-            print(f'Error processing {symbol}: {e}')
+            print(f"❌ Error processing {sym}: {e}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fetch & upload stock CSVs")
-    parser.add_argument(
-        "--symbol", "-s",
-        help="(Optional) Single symbol to process instead of symbols.csv",
-        default=None
-    )
+    parser = argparse.ArgumentParser("Fetch & upload stock CSVs")
+    parser.add_argument("--symbol", "-s", help="Single symbol to process", default=None)
     args = parser.parse_args()
     main(symbol=args.symbol)
