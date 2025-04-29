@@ -63,42 +63,38 @@ def validate_and_fix_csv(csv_filename):
 def update_qld2(repo, branch, github_token):
     """
     Updates qld2_stock_data.csv by:
-    1) On the first run: generating predicted 2×QQQ history before QLD inception.
-    2) On every run: appending new QLD rows since the last date.
-    Finally, pushes the updated CSV back to GitHub.
+      1) Generating predicted 2×QQQ history before QLD inception (first run).
+      2) Appending new QLD rows since last date on subsequent runs.
+    Then pushes the updated CSV back to GitHub.
     """
     fname = 'qld2_stock_data.csv'
     inception = '2006-06-21'
     today = datetime.now().strftime('%Y-%m-%d')
 
-    # If we've run before, read & append new QLD
     if os.path.exists(fname):
-        # parse both dd/mm and ISO formats
-        df = pd.read_csv(
-            fname,
-            index_col='Date',
-            parse_dates=True,
-            dayfirst=True,
-            infer_datetime_format=True
-        )
+        # read without auto-parsing, then coerce to datetime
+        df = pd.read_csv(fname, index_col='Date', parse_dates=False)
+        df.index = pd.to_datetime(df.index, dayfirst=True, errors='coerce')
+        df = df[df.index.notna()]
         last = df.index.max()
         if last.strftime('%Y-%m-%d') >= today:
             print(f"qld2 up to date through {last.date()}")
-        else:
-            start = (last + timedelta(days=1)).strftime('%Y-%m-%d')
-            new = yf.download('QLD', start=start, end=today)
-            if not new.empty:
-                if isinstance(new.columns, pd.MultiIndex):
-                    new.columns = new.columns.get_level_values(0)
-                new.index = new.index.strftime('%d/%m/%Y')
-                if 'Adj Close' not in new.columns:
-                    new['Adj Close'] = new['Close']
-                new = new[['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']]
-                df_new = pd.concat([df, new])
-                df_new.to_csv(fname, index_label='Date')
-                print(f"Appended {len(new)} new rows to {fname}.")
+            return
+        # fetch from the day after last
+        start = (last + timedelta(days=1)).strftime('%Y-%m-%d')
+        new = yf.download('QLD', start=start, end=today)
+        if not new.empty:
+            if isinstance(new.columns, pd.MultiIndex):
+                new.columns = new.columns.get_level_values(0)
+            new.index = new.index.strftime('%d/%m/%Y')
+            if 'Adj Close' not in new.columns:
+                new['Adj Close'] = new['Close']
+            new = new[['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']]
+            df_new = pd.concat([df, new])
+            df_new.to_csv(fname, index_label='Date')
+            print(f"Appended {len(new)} new rows to {fname}.")
     else:
-        # first run: build predicted QQQ×2 history
+        # first-ever run: build predicted history from QQQ
         hist = yf.download('QQQ', start='2000-01-01', end=inception)
         if isinstance(hist.columns, pd.MultiIndex):
             hist.columns = hist.columns.get_level_values(0)
@@ -107,7 +103,7 @@ def update_qld2(repo, branch, github_token):
         hist.index = hist.index.strftime('%d/%m/%Y')
         hist.to_csv(fname, index_label='Date')
         print(f"Initialized predicted history in {fname}.")
-        # now append real QLD from inception onward
+        # now recursively append actual QLD
         update_qld2(repo, branch, github_token)
         return
 
@@ -142,7 +138,6 @@ def main(symbol=None):
     branch = 'main'
     today = datetime.now().strftime('%Y-%m-%d')
 
-    # build symbols list
     if symbol:
         syms = [symbol]
     else:
@@ -168,7 +163,6 @@ def main(symbol=None):
         df.to_csv(fn, index_label='Date')
         if not validate_and_fix_csv(fn):
             continue
-        # push symbol file
         url = f'https://api.github.com/repos/{repo}/contents/{fn}'
         hdr = {'Authorization': f'token {token}'}
         r = requests.get(url, headers=hdr)
