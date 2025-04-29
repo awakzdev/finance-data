@@ -3,15 +3,17 @@ import argparse
 import requests
 import base64
 import yfinance as yf
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import csv
 import re
 import pandas as pd
 
+
 def normalize_header(header_row):
     """Trim whitespace from each column in the header row."""
     return [col.strip() for col in header_row]
+
 
 def validate_and_fix_csv(csv_filename):
     """
@@ -37,11 +39,6 @@ def validate_and_fix_csv(csv_filename):
             reader = csv.reader(infile)
             lines = list(reader)
 
-        # Debug: Print the first few lines of the CSV for inspection
-        print(f"Debug: First 3 lines from {csv_filename}:")
-        for line in lines[:3]:
-            print(line)
-
         # Find the index where the correct header starts (using normalization)
         header_index = -1
         for i, row in enumerate(lines):
@@ -53,36 +50,26 @@ def validate_and_fix_csv(csv_filename):
             print(f"Header not found in {csv_filename}. The file may be corrupted.")
             return False
 
-        # Debug: Print the header row found
-        print(f"Header found in {csv_filename} at line {header_index}: {lines[header_index]}")
-
-        # Extract the relevant rows starting from the header
         valid_rows = lines[header_index:]
 
-        # Verify that there is at least one data row
         if len(valid_rows) < 2:
             print(f"No data found after header in {csv_filename}.")
             return False
 
         # Validate data rows: stop reading after the first invalid row.
-        valid_data = [valid_rows[0]]  # Include the header
+        valid_data = [valid_rows[0]]  # header
         for row in valid_rows[1:]:
             if not row:
-                continue  # Skip empty lines
-            if date_pattern.match(row[0]):
-                if len(row) == len(expected_header):
-                    valid_data.append(row)
-                else:
-                    print(f"Skipping row with incorrect number of columns: {row}")
+                continue
+            if date_pattern.match(row[0]) and len(row) == len(expected_header):
+                valid_data.append(row)
             else:
-                print(f"Encountered non-data row: {row}. Discarding all subsequent lines.")
                 break
 
         if len(valid_data) < 2:
             print(f"No valid data found in {csv_filename}.")
             return False
 
-        # Rewrite the CSV with valid data only
         with open(csv_filename, 'w', newline='', encoding='utf-8') as outfile:
             writer = csv.writer(outfile)
             writer.writerows(valid_data)
@@ -94,23 +81,67 @@ def validate_and_fix_csv(csv_filename):
         print(f"An error occurred while validating {csv_filename}: {e}")
         return False
 
+
+def update_qld2():
+    """
+    Maintain qld2_stock_data.csv:
+    - On first run: create predicted history by doubling QQQ prices before QLD inception.
+    - On every run: append new actual QLD rows since last date in qld2_stock_data.csv.
+    """
+    repo_fname    = 'qld2_stock_data.csv'
+    inception_str = '2006-06-21'
+    today_str     = datetime.now().strftime('%Y-%m-%d')
+
+    # If the file already exists, read it
+    if os.path.exists(repo_fname):
+        existing = pd.read_csv(repo_fname, index_col='Date', parse_dates=True)
+        last_date = existing.index.max()
+        if last_date.strftime('%Y-%m-%d') >= today_str:
+            print("qld2 is already up to date through", last_date.date())
+            return
+        start_new = (last_date + timedelta(days=1)).strftime('%Y-%m-%d')
+    else:
+        # First run: generate predicted history from QQQ
+        qqq = yf.download('QQQ', start='2000-01-01', end=inception_str)
+        if isinstance(qqq.columns, pd.MultiIndex):
+            qqq.columns = qqq.columns.get_level_values(0)
+        for c in ['Open','High','Low','Close','Adj Close']:
+            qqq[c] = qqq[c] * 2
+        qqq.index = qqq.index.strftime('%d/%m/%Y')
+        qqq.to_csv(repo_fname, index_label='Date')
+        start_new = inception_str
+
+    # Fetch new actual QLD data
+    qld_new = yf.download('QLD', start=start_new, end=today_str)
+    if qld_new.empty:
+        print("No new QLD rows to add.")
+        return
+    if isinstance(qld_new.columns, pd.MultiIndex):
+        qld_new.columns = qld_new.columns.get_level_values(0)
+    qld_new.index = qld_new.index.strftime('%d/%m/%Y')
+    if 'Adj Close' not in qld_new.columns:
+        qld_new['Adj Close'] = qld_new['Close']
+    qld_new = qld_new[['Open','High','Low','Close','Adj Close','Volume']]
+
+    df_existing = pd.read_csv(repo_fname, index_col='Date', parse_dates=True)
+    combined   = pd.concat([df_existing, qld_new])
+    combined.to_csv(repo_fname, index_label='Date')
+    print(f"Appended {len(qld_new)} new QLD rows to {repo_fname}.")
+
+
 def main(symbol: str = None):
-    # Retrieve the GitHub token from environment variables
     load_dotenv()
     github_token = os.getenv('TOKEN')
     if not github_token:
         raise ValueError("TOKEN environment variable not set")
     else:
         print(f"TOKEN loaded, length: {len(github_token)} characters")
-    
-    repo = 'awakzdev/finance-data'
+
+    repo   = 'awakzdev/finance-data'
     branch = 'main'
-    
-    # Step 1: Fetch today's date in the format YYYY-MM-DD
     today_date = datetime.now().strftime('%Y-%m-%d')
-    
-    # Symbols to process
-    # Decide which symbols to process
+
+    # Determine symbols list
     if symbol:
         symbols = [symbol]
         print(f"Processing only symbol from argument: {symbol}")
@@ -121,54 +152,38 @@ def main(symbol: str = None):
         with open(symbols_file, 'r', encoding='utf-8') as f:
             symbols = [line.strip() for line in f if line.strip()]
 
-
-    
     for symbol in symbols:
+        # Special case for qld2
+        if symbol.lower() == 'qld2':
+            update_qld2()
+            continue
+
         try:
-            # Step 2: Fetch historical data for the symbol
             print(f"Fetching data for symbol: {symbol}")
             data = yf.download(symbol, start='2006-06-21', end=today_date)
             if data.empty:
                 print(f"No data fetched for symbol: {symbol}")
                 continue
 
-            # Flatten multi-index columns if necessary
             if isinstance(data.columns, pd.MultiIndex):
                 data.columns = data.columns.get_level_values(0)
-
-            # Convert the index (dates) to the desired format (dd/mm/yyyy)
             data.index = data.index.strftime('%d/%m/%Y')
-            
-            # Adjust columns to match the expected CSV format:
-            # Expected header: Date,Open,High,Low,Close,Adj Close,Volume
-            # For example, for QLD the DataFrame might have: Price, Close, High, Low, Open, Volume
-            # Remove the 'Price' column if it exists.
             if 'Price' in data.columns:
                 data.drop(columns='Price', inplace=True)
-            
-            # Create 'Adj Close' if it's not present (using 'Close' as a fallback)
             if 'Adj Close' not in data.columns:
                 data['Adj Close'] = data['Close']
-            
-            # Reorder the columns to match the expected header.
             expected_cols = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
             data = data[expected_cols]
-            
-            # Step 3: Save the data to a CSV file with the symbol as a prefix.
+
             sanitized_symbol = symbol.replace('^', '')
             csv_filename = f'{sanitized_symbol.lower()}_stock_data.csv'
-            
-            # Write CSV with "Date" as the index label so the header becomes:
-            # Date,Open,High,Low,Close,Adj Close,Volume
             data.to_csv(csv_filename, index=True, index_label='Date')
             print(f"CSV {csv_filename} saved successfully.")
 
-            # Step 4: Validate and fix the CSV if necessary.
             if not validate_and_fix_csv(csv_filename):
                 print(f"Skipping upload for {csv_filename} due to validation failure.")
-                continue  # Skip uploading this file
+                continue
 
-            # Step 5: Get the current file's SHA from GitHub (if it exists)
             url = f'https://api.github.com/repos/{repo}/contents/{csv_filename}'
             headers = {'Authorization': f'token {github_token}'}
             response = requests.get(url, headers=headers)
@@ -184,12 +199,10 @@ def main(symbol: str = None):
                 print(f'Unexpected error while accessing {csv_filename}: {response_json}')
                 continue
 
-            # Step 6: Read the new CSV file and encode it in base64.
             with open(csv_filename, 'rb') as f:
                 content = f.read()
             content_base64 = base64.b64encode(content).decode('utf-8')
 
-            # Step 7: Create the payload for the GitHub API request.
             commit_message = f'Update {sanitized_symbol} stock data'
             payload = {
                 'message': commit_message,
@@ -199,7 +212,6 @@ def main(symbol: str = None):
             if sha:
                 payload['sha'] = sha
 
-            # Step 8: Push the file to the repository.
             response = requests.put(url, headers=headers, json=payload)
             if response.status_code in [200, 201]:
                 print(f'File {csv_filename} updated successfully in the repository.')
@@ -209,6 +221,7 @@ def main(symbol: str = None):
 
         except Exception as e:
             print(f'An error occurred while processing symbol {symbol}: {e}')
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fetch & upload stock CSVs")
