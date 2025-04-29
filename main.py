@@ -58,11 +58,42 @@ def validate_and_fix_csv(csv_filename):
         return False
 
 
+def upload_file_to_github(filepath, repo, branch, token, message=None):
+    """
+    Uploads or updates a file in the GitHub repo, mirroring the symbol logic.
+    """
+    if message is None:
+        message = f"Update {os.path.basename(filepath)}"
+    url = f'https://api.github.com/repos/{repo}/contents/{os.path.basename(filepath)}'
+    headers = {'Authorization': f'token {token}'}
+    resp = requests.get(url, headers=headers)
+    if resp.status_code == 200:
+        sha = resp.json().get('sha')
+        action = 'Updating'
+    elif resp.status_code == 404:
+        sha = None
+        action = 'Creating'
+    else:
+        print(f"Error accessing {filepath}: {resp.json()}")
+        return
+    print(f"{action} {filepath}")
+
+    content_b64 = base64.b64encode(open(filepath,'rb').read()).decode('utf-8')
+    payload = {'message': message, 'content': content_b64, 'branch': branch}
+    if sha:
+        payload['sha'] = sha
+    up = requests.put(url, headers=headers, json=payload)
+    status = up.status_code
+    if status in (200,201):
+        print(f"Successfully pushed {filepath}")
+    else:
+        print(f"Failed to push {filepath}: {up.json()}")
+
+
 def main(symbol: str = None):
-    # Load GitHub token
     load_dotenv()
-    github_token = os.getenv('TOKEN') or os.getenv('GITHUB_TOKEN')
-    if not github_token:
+    token = os.getenv('TOKEN') or os.getenv('GITHUB_TOKEN')
+    if not token:
         raise ValueError("TOKEN environment variable not set")
 
     repo = 'awakzdev/finance-data'
@@ -85,7 +116,6 @@ def main(symbol: str = None):
                 print(f"No data fetched for symbol: {sym}")
                 continue
 
-            # flatten columns
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
             df.index = df.index.strftime('%d/%m/%Y')
@@ -101,41 +131,17 @@ def main(symbol: str = None):
                 print(f"Skipping upload for {filename}")
                 continue
 
-            # upload to GitHub
-            url = f'https://api.github.com/repos/{repo}/contents/{filename}'
-            headers = {'Authorization': f'token {github_token}'}
-            res = requests.get(url, headers=headers)
-            if res.status_code == 200:
-                sha = res.json()['sha']
-                print(f"Updating {filename}")
-            elif res.status_code == 404:
-                sha = None
-                print(f"Creating {filename}")
-            else:
-                print(f"Error accessing {filename}: {res.json()}")
-                continue
-
-            content_b64 = base64.b64encode(open(filename,'rb').read()).decode('utf-8')
-            payload = {'message': f'Update {sym} stock data', 'content': content_b64, 'branch': branch}
-            if sha:
-                payload['sha'] = sha
-
-            up = requests.put(url, headers=headers, json=payload)
-            if up.status_code in (200,201):
-                print(f"Successfully pushed {filename}")
-            else:
-                print(f"Failed to push {filename}: {up.json()}")
+            upload_file_to_github(filename, repo, branch, token, f"Update {sym} stock data")
 
         except Exception as e:
             print(f"Error processing {sym}: {e}")
 
-    # Step 2: Merge preidctedQLD.csv + qld_stock_data.csv → qld2_stock_data.csv
-    pred_file = 'preidctedQLD.csv'
+    # Step 2: Merge predictedQLD.csv + qld_stock_data.csv → qld2_stock_data.csv
+    pred_file = 'predictedQLD.csv'
     real_file = 'qld_stock_data.csv'
     merged_file = 'qld2_stock_data.csv'
 
     if os.path.exists(pred_file) and os.path.exists(real_file):
-        # read both, preserving format
         df_pred = pd.read_csv(pred_file, index_col='Date', parse_dates=False)
         df_real = pd.read_csv(real_file, index_col='Date', parse_dates=False)
         cols = ['Open','High','Low','Close','Adj Close','Volume']
@@ -147,29 +153,7 @@ def main(symbol: str = None):
         print(f"Merged {pred_file} + {real_file} into {merged_file}")
 
         if validate_and_fix_csv(merged_file):
-            url = f'https://api.github.com/repos/{repo}/contents/{merged_file}'
-            headers = {'Authorization': f'token {github_token}'}
-            res = requests.get(url, headers=headers)
-            if res.status_code == 200:
-                sha = res.json()['sha']
-                print(f"Updating {merged_file}")
-            elif res.status_code == 404:
-                sha = None
-                print(f"Creating {merged_file}")
-            else:
-                print(f"Error accessing {merged_file}: {res.json()}")
-                sha = None
-
-            content_b64 = base64.b64encode(open(merged_file,'rb').read()).decode('utf-8')
-            payload = {'message': 'Update merged QLD data', 'content': content_b64, 'branch': branch}
-            if sha:
-                payload['sha'] = sha
-
-            up = requests.put(url, headers=headers, json=payload)
-            if up.status_code in (200,201):
-                print(f"Successfully pushed {merged_file}")
-            else:
-                print(f"Failed to push {merged_file}: {up.json()}")
+            upload_file_to_github(merged_file, repo, branch, token, "Update merged QLD data")
     else:
         print(f"Cannot merge QLD data: {pred_file} or {real_file} missing.")
 
