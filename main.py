@@ -94,7 +94,14 @@ def update_qld2():
 
     # If the file already exists, read it
     if os.path.exists(repo_fname):
-        existing = pd.read_csv(repo_fname, index_col='Date', parse_dates=True)
+        # ensure Date index is parsed as datetime (dayfirst for dd/mm/yyyy)
+        existing = pd.read_csv(
+            repo_fname,
+            index_col='Date',
+            parse_dates=True,
+            dayfirst=True
+        )
+        
         last_date = existing.index.max()
         if last_date.strftime('%Y-%m-%d') >= today_str:
             print("qld2 is already up to date through", last_date.date())
