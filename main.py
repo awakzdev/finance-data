@@ -91,7 +91,7 @@ def main(symbol: str=None):
     for sym in symbols:
         try:
             print(f"\n🔍 Fetching {sym}…")
-            df = yf.download(sym, start='2006-06-21', end=today)
+            df = yf.download(sym, period='max', end=today)
             if df.empty:
                 print(f"⚠️ No data for {sym}, skipping.")
                 continue
