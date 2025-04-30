@@ -148,7 +148,7 @@ def main(symbol: str=None):
                 combo = pd.concat([pred_df, actual_df])
                 # ── Force a DatetimeIndex before formatting ──
                 combo.index = pd.to_datetime(combo.index, dayfirst=True)
-                combo.index = combo.index.strftime('%d/%m/%Y')
+                combo.index = combo.index.map(lambda dt: dt.strftime('%d/%m/%Y'))
                 combo.to_csv(combined_path, index_label='Date')
                 print(f"💾 Wrote {combined_path}")
 
